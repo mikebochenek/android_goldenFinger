@@ -1,5 +1,6 @@
 package com.example.myapplication
 
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -70,8 +71,13 @@ class MainActivity : FragmentActivity() {
 fun FingerprintDemoScreen(launchCount: Int, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
+    val prefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
+    
     var debugLog by remember { mutableStateOf("Ready to scan...") }
     var authStatus by remember { mutableStateOf("Waiting...") }
+    
+    var successCount by remember { mutableStateOf(prefs.getInt("success_count", 0)) }
+    var failCount by remember { mutableStateOf(prefs.getInt("fail_count", 0)) }
 
     val packageInfo = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -118,13 +124,43 @@ fun FingerprintDemoScreen(launchCount: Int, modifier: Modifier = Modifier) {
                     showBiometricPrompt(
                         activity = activity,
                         onStatusChange = { authStatus = it },
-                        onLogUpdate = { debugLog = it }
+                        onLogUpdate = { debugLog = it },
+                        onScanResult = { isSuccess ->
+                            if (isSuccess) {
+                                successCount++
+                                prefs.edit { putInt("success_count", successCount) }
+                            } else {
+                                failCount++
+                                prefs.edit { putInt("fail_count", failCount) }
+                            }
+                        }
                     )
                 }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Invoke Scanner")
+        }
+
+        val totalScans = successCount + failCount
+        val successRate = if (totalScans > 0) (successCount.toFloat() / totalScans * 100) else 0f
+        val failRate = if (totalScans > 0) (failCount.toFloat() / totalScans * 100) else 0f
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = "Scan Statistics",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Text(text = "Total Scans: $totalScans")
+            Text(text = "Successful: $successCount (%.1f%%)".format(successRate))
+            Text(text = "Failed: $failCount (%.1f%%)".format(failRate))
         }
 
         Text(
@@ -168,7 +204,8 @@ fun FingerprintDemoScreen(launchCount: Int, modifier: Modifier = Modifier) {
 private fun showBiometricPrompt(
     activity: FragmentActivity,
     onStatusChange: (String) -> Unit,
-    onLogUpdate: (String) -> Unit
+    onLogUpdate: (String) -> Unit,
+    onScanResult: (Boolean) -> Unit
 ) {
     val executor = ContextCompat.getMainExecutor(activity)
     val biometricPrompt = BiometricPrompt(activity, executor,
@@ -177,18 +214,22 @@ private fun showBiometricPrompt(
                 super.onAuthenticationError(errorCode, errString)
                 onStatusChange("Error: $errorCode")
                 onLogUpdate("ERROR CODE: $errorCode\nSTRING: $errString\nMATCH %: [HIDDEN BY OS]")
+                // We don't count technical errors as failed fingerprint matches usually, 
+                // but for this demo let's count them as failures if they are auth-related.
             }
 
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 super.onAuthenticationSucceeded(result)
                 onStatusChange("Success!")
                 onLogUpdate("AUTH TYPE: ${result.authenticationType}\nMATCH: HIGH CONFIDENCE\nPERCENTAGE: N/A (SecureEnclave Private)")
+                onScanResult(true)
             }
 
             override fun onAuthenticationFailed() {
                 super.onAuthenticationFailed()
                 onStatusChange("Failed")
                 onLogUpdate("RESULT: NO MATCH\nRETRY: Suggested\nCONFIDENCE: BELOW THRESHOLD")
+                onScanResult(false)
             }
         })
 
