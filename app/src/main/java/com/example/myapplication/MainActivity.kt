@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.biometric.BiometricManager
@@ -42,6 +41,13 @@ import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
 import com.example.myapplication.ui.theme.MyApplicationTheme
 
+/**
+ * Main activity for the goldenFinger app.
+ *
+ * Manages the launch counter persistence and sets up the root UI content
+ * displaying [FingerprintDemoScreen]. Extends [FragmentActivity] as required
+ * by the AndroidX Biometric library.
+ */
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,6 +73,15 @@ class MainActivity : FragmentActivity() {
     }
 }
 
+/**
+ * Main UI composable screen for demonstrating and debugging biometric fingerprint scanning.
+ *
+ * Displays app launch and version information, scan statistics (success/fail counts and rates),
+ * biometric authentication status, and detailed debug logs regarding Android TEE/StrongBox biometric behavior.
+ *
+ * @param launchCount Total number of times the application has been launched.
+ * @param modifier The [Modifier] to be applied to the layout.
+ */
 @Composable
 fun FingerprintDemoScreen(launchCount: Int, modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -201,6 +216,17 @@ fun FingerprintDemoScreen(launchCount: Int, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Displays the AndroidX [BiometricPrompt] dialog to authenticate the user using biometrics.
+ *
+ * Configures [BiometricPrompt.PromptInfo] requiring [BiometricManager.Authenticators.BIOMETRIC_STRONG]
+ * and handles authentication callbacks to update status, debug logs, and scan statistics.
+ *
+ * @param activity The host [FragmentActivity] required by [BiometricPrompt].
+ * @param onStatusChange Callback invoked with human-readable status text updates.
+ * @param onLogUpdate Callback invoked with detailed debug log message updates.
+ * @param onScanResult Callback invoked with `true` on successful authentication, or `false` on failure.
+ */
 private fun showBiometricPrompt(
     activity: FragmentActivity,
     onStatusChange: (String) -> Unit,
@@ -243,6 +269,9 @@ private fun showBiometricPrompt(
     biometricPrompt.authenticate(promptInfo)
 }
 
+/**
+ * Preview composable for [FingerprintDemoScreen] rendered in the Android Studio design editor.
+ */
 @Preview(showBackground = true)
 @Composable
 fun DemoPreview() {
