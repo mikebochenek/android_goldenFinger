@@ -23,9 +23,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
+import com.example.myapplication.jogging.JoggingTrackerScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
 
 /**
@@ -63,12 +67,48 @@ class MainActivity : FragmentActivity() {
         setContent {
             MyApplicationTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    FingerprintDemoScreen(
+                    MainAppContent(
                         launchCount = launchCount,
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Root Composable displaying top tab navigation between the Strava-like Jogging Tracker
+ * and the Fingerprint Scanner Debug screen.
+ */
+@Composable
+fun MainAppContent(launchCount: Int, modifier: Modifier = Modifier) {
+    var selectedTab by remember { mutableIntStateOf(0) }
+
+    Column(modifier = modifier.fillMaxSize()) {
+        PrimaryTabRow(selectedTabIndex = selectedTab) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text("🏃 Jogging Tracker") }
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text("🔒 Scanner Debug") }
+            )
+        }
+
+        when (selectedTab) {
+            0 -> JoggingTrackerScreen(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+            )
+            1 -> FingerprintDemoScreen(
+                launchCount = launchCount,
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }
