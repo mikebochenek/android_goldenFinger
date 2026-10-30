@@ -342,39 +342,9 @@ fun JoggingTrackerScreen(
         }
     }
 
-    // Permission launcher for location access
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (granted) {
-            startSession()
-        } else {
-            Toast.makeText(context, "Location permission required to track distance", Toast.LENGTH_LONG).show()
-            statusMessage = "Location permission denied"
-            statusColor = Color.Red
-        }
-    }
-
-    fun checkPermissionsAndStart() {
-        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        if (hasFine || hasCoarse) {
-            startSession()
-        } else {
-            permissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
-        }
-    }
-
     fun triggerFingerprintUnlock() {
         if (activity == null) {
-            checkPermissionsAndStart()
+            startSession()
             return
         }
 
@@ -384,7 +354,7 @@ fun JoggingTrackerScreen(
         if (canAuthenticate != BiometricManager.BIOMETRIC_SUCCESS) {
             // If biometrics not set up or hardware unavailable, fallback to direct start
             Toast.makeText(context, "Biometric unavailable. Starting session...", Toast.LENGTH_SHORT).show()
-            checkPermissionsAndStart()
+            startSession()
             return
         }
 
@@ -399,7 +369,7 @@ fun JoggingTrackerScreen(
 
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    checkPermissionsAndStart()
+                    startSession()
                 }
 
                 override fun onAuthenticationFailed() {
@@ -417,6 +387,36 @@ fun JoggingTrackerScreen(
             .build()
 
         biometricPrompt.authenticate(promptInfo)
+    }
+
+    // Permission launcher for location access
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            triggerFingerprintUnlock()
+        } else {
+            Toast.makeText(context, "Location permission required to track distance", Toast.LENGTH_LONG).show()
+            statusMessage = "Location permission denied"
+            statusColor = Color.Red
+        }
+    }
+
+    fun startRunFlow() {
+        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (hasFine || hasCoarse) {
+            triggerFingerprintUnlock()
+        } else {
+            permissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
     }
 
     // Timer loop with auto-stop at 2 hours limit
@@ -585,7 +585,7 @@ fun JoggingTrackerScreen(
         // Action Buttons
         if (!isTracking) {
             Button(
-                onClick = { triggerFingerprintUnlock() },
+                onClick = { startRunFlow() },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
