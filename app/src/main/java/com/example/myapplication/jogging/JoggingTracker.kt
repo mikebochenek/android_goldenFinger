@@ -2,11 +2,18 @@ package com.example.myapplication.jogging
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
+import android.os.IBinder
 import android.os.Looper
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -15,7 +22,6 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,29 +30,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,12 +52,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
@@ -70,7 +67,15 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -154,24 +159,85 @@ object JoggingStorage {
 }
 
 /**
- * Handles location updates from FusedLocationProviderClient or standard LocationManager.
+ * Shared state manager for the active jogging session across UI and Foreground Service.
  */
-class LocationTracker(private val context: Context) {
-    private val fusedLocationClient: FusedLocationProviderClient =
-        LocationServices.getFusedLocationProviderClient(context)
+object JoggingTrackerManager {
+    data class JoggingState(
+        val isTracking: Boolean = false,
+        val startTimeMs: Long = 0L,
+        val elapsedTimeMs: Long = 0L,
+        val distanceMeters: Float = 0f,
+        val finishReason: String? = null
+    )
+
+    private val _state = MutableStateFlow(JoggingState())
+    val state: StateFlow<JoggingState> = _state.asStateFlow()
+
+    fun updateState(updater: (JoggingState) -> JoggingState) {
+        _state.value = updater(_state.value)
+    }
+}
+
+/**
+ * Foreground Service that keeps distance tracking and elapsed time running in the background,
+ * even when the app is minimized or screen is locked.
+ */
+class JoggingService : Service() {
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationCallback: LocationCallback? = null
     private var locationManager: LocationManager? = null
     private var systemLocationListener: LocationListener? = null
+    private var startTimeMs: Long = 0L
     private var lastLocation: Location? = null
+    private var timerJob: kotlinx.coroutines.Job? = null
+
+    companion object {
+        const val ACTION_START = "ACTION_START"
+        const val ACTION_STOP = "ACTION_STOP"
+        const val NOTIFICATION_ID = 1001
+        const val CHANNEL_ID = "jogging_channel"
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        createNotificationChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopRun("Stopped by User")
+            }
+            else -> {
+                if (!JoggingTrackerManager.state.value.isTracking) {
+                    startRun()
+                }
+            }
+        }
+        return START_STICKY
+    }
 
     @SuppressLint("MissingPermission")
-    fun startTracking(onDistanceUpdated: (deltaMeters: Float) -> Unit) {
-        lastLocation = null
-        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    private fun startRun() {
+        startTimeMs = System.currentTimeMillis()
+        JoggingTrackerManager.updateState {
+            it.copy(
+                isTracking = true,
+                startTimeMs = startTimeMs,
+                elapsedTimeMs = 0L,
+                distanceMeters = 0f,
+                finishReason = null
+            )
+        }
 
-        if (!hasFine && !hasCoarse) return
+        val notification = buildNotification(0f, 0L)
+        startForeground(NOTIFICATION_ID, notification)
 
+        // Request location updates via FusedLocationProviderClient
         try {
             val locationRequest = LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY,
@@ -181,7 +247,7 @@ class LocationTracker(private val context: Context) {
             val cb = object : LocationCallback() {
                 override fun onLocationResult(result: LocationResult) {
                     for (loc in result.locations) {
-                        processNewLocation(loc, onDistanceUpdated)
+                        processNewLocation(loc)
                     }
                 }
             }
@@ -189,17 +255,43 @@ class LocationTracker(private val context: Context) {
             fusedLocationClient.requestLocationUpdates(locationRequest, cb, Looper.getMainLooper())
         } catch (e: Exception) {
             e.printStackTrace()
-            fallbackLocationManager(onDistanceUpdated)
+            fallbackLocationManager()
+        }
+
+        // Start timer job
+        timerJob?.cancel()
+        timerJob = serviceScope.launch {
+            while (true) {
+                delay(100L)
+                val current = System.currentTimeMillis()
+                val elapsed = current - startTimeMs
+                if (elapsed >= MAX_JOGGING_DURATION_MS) {
+                    JoggingTrackerManager.updateState {
+                        it.copy(
+                            elapsedTimeMs = MAX_JOGGING_DURATION_MS
+                        )
+                    }
+                    stopRun("Auto-stopped (2-Hour Max Limit)")
+                    break
+                } else {
+                    JoggingTrackerManager.updateState {
+                        it.copy(
+                            elapsedTimeMs = elapsed
+                        )
+                    }
+                    updateNotification(JoggingTrackerManager.state.value.distanceMeters, elapsed)
+                }
+            }
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun fallbackLocationManager(onDistanceUpdated: (deltaMeters: Float) -> Unit) {
+    private fun fallbackLocationManager() {
         try {
-            val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+            val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
             locationManager = lm
             val listener = LocationListener { location ->
-                processNewLocation(location, onDistanceUpdated)
+                processNewLocation(location)
             }
             systemLocationListener = listener
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
@@ -212,27 +304,105 @@ class LocationTracker(private val context: Context) {
         }
     }
 
-    private fun processNewLocation(location: Location, onDistanceUpdated: (deltaMeters: Float) -> Unit) {
+    private fun processNewLocation(location: Location) {
         if (location.hasAccuracy() && location.accuracy > 50f) return
 
         val prev = lastLocation
         if (prev != null) {
             val distance = prev.distanceTo(location)
             if (distance in 0.5f..300f) {
-                onDistanceUpdated(distance)
+                JoggingTrackerManager.updateState { state ->
+                    val newDist = state.distanceMeters + distance
+                    updateNotification(newDist, state.elapsedTimeMs)
+                    state.copy(distanceMeters = newDist)
+                }
             }
         }
         lastLocation = location
     }
 
-    fun stopTracking() {
-        locationCallback?.let { fusedLocationClient.removeLocationUpdates(it) }
+    private fun stopRun(reason: String) {
+        timerJob?.cancel()
+        timerJob = null
+
+        locationCallback?.let {
+            fusedLocationClient.removeLocationUpdates(it)
+        }
         locationCallback = null
+
         systemLocationListener?.let { listener ->
             locationManager?.removeUpdates(listener)
         }
         systemLocationListener = null
         lastLocation = null
+
+        val state = JoggingTrackerManager.state.value
+        if (state.isTracking || state.startTimeMs > 0L) {
+            val endTime = System.currentTimeMillis()
+            val session = JoggingSession(
+                startTimeMs = state.startTimeMs,
+                endTimeMs = endTime,
+                durationMs = state.elapsedTimeMs,
+                distanceMeters = state.distanceMeters,
+                finishReason = reason
+            )
+            JoggingStorage.saveSession(this, session)
+        }
+
+        JoggingTrackerManager.updateState {
+            it.copy(
+                isTracking = false,
+                finishReason = reason
+            )
+        }
+
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Jogging Tracker Service",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Tracks distance and duration in the background"
+            }
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            manager?.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildNotification(distanceMeters: Float, elapsedTimeMs: Long): android.app.Notification {
+        val stopIntent = Intent(this, JoggingService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 0, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val contentText = "Dist: ${formatDistance(distanceMeters)} | Time: ${formatDuration(elapsedTimeMs)}"
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("🏃 Jogging Tracker Active")
+            .setContentText(contentText)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setOngoing(true)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Run", stopPendingIntent)
+            .build()
+    }
+
+    private fun updateNotification(distanceMeters: Float, elapsedTimeMs: Long) {
+        val notification = buildNotification(distanceMeters, elapsedTimeMs)
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        manager?.notify(NOTIFICATION_ID, notification)
+    }
+
+    override fun onDestroy() {
+        serviceScope.cancel()
+        super.onDestroy()
     }
 }
 
@@ -280,7 +450,8 @@ fun formatDate(ms: Long): String {
 /**
  * Main Strava-like Jogging Tracker Composable UI.
  *
- * Provides biometric fingerprint unlock to start jogging, real-time distance and duration tracking,
+ * Provides biometric fingerprint unlock to start jogging, real-time distance and duration tracking
+ * running in a Foreground Service (surviving app minimize and screen lock),
  * automatic termination after 2 hours, and run history.
  */
 @Composable
@@ -289,16 +460,32 @@ fun JoggingTrackerScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
+
+    val trackerState by JoggingTrackerManager.state.collectAsState()
+    val isTracking = trackerState.isTracking
+    val elapsedTimeMs = trackerState.elapsedTimeMs
+    val distanceMeters = trackerState.distanceMeters
+    val finishReason = trackerState.finishReason
     
-    val locationTracker = remember { LocationTracker(context) }
-    
-    var isTracking by remember { mutableStateOf(false) }
-    var startTimeMs by remember { mutableLongStateOf(0L) }
-    var elapsedTimeMs by remember { mutableLongStateOf(0L) }
-    var distanceMeters by remember { mutableFloatStateOf(0f) }
-    
-    var statusMessage by remember { mutableStateOf("Touch Fingerprint Sensor to Start Run") }
-    var statusColor by remember { mutableStateOf(Color(0xFFFC4C02)) } // Strava Orange
+    var statusMessage by remember(isTracking, finishReason) {
+        mutableStateOf(
+            when {
+                isTracking -> "Jogging in progress (Background Service Active)..."
+                finishReason != null -> "Run finished! ($finishReason)"
+                else -> "Touch Fingerprint Sensor to Start Run"
+            }
+        )
+    }
+    var statusColor by remember(isTracking, finishReason) {
+        mutableStateOf(
+            when {
+                isTracking -> Color(0xFFFC4C02)
+                finishReason?.contains("2-Hour") == true -> Color(0xFFD32F2F)
+                finishReason != null -> Color(0xFF388E3C)
+                else -> Color(0xFFFC4C02)
+            }
+        )
+    }
     
     var sessionList by remember { mutableStateOf(JoggingStorage.getSessions(context)) }
 
@@ -306,45 +493,29 @@ fun JoggingTrackerScreen(
         sessionList = JoggingStorage.getSessions(context)
     }
 
-    fun stopSession(reason: String) {
-        if (!isTracking) return
-        val endTime = System.currentTimeMillis()
-        val finalDuration = elapsedTimeMs
-        val finalDistance = distanceMeters
-        
-        isTracking = false
-        locationTracker.stopTracking()
-        
-        val newSession = JoggingSession(
-            startTimeMs = startTimeMs,
-            endTimeMs = endTime,
-            durationMs = finalDuration,
-            distanceMeters = finalDistance,
-            finishReason = reason
-        )
-        JoggingStorage.saveSession(context, newSession)
+    // Refresh history periodically or when tracking changes
+    androidx.compose.runtime.LaunchedEffect(isTracking) {
         refreshHistory()
-        
-        statusMessage = "Run finished! ($reason)"
-        statusColor = if (reason.contains("2-Hour")) Color(0xFFD32F2F) else Color(0xFF388E3C)
     }
 
-    fun startSession() {
-        distanceMeters = 0f
-        elapsedTimeMs = 0L
-        startTimeMs = System.currentTimeMillis()
-        isTracking = true
-        statusMessage = "Jogging in progress..."
-        statusColor = Color(0xFFFC4C02)
-        
-        locationTracker.startTracking { delta ->
-            distanceMeters += delta
+    fun startServiceSession() {
+        val intent = Intent(context, JoggingService::class.java).apply {
+            action = JoggingService.ACTION_START
         }
+        ContextCompat.startForegroundService(context, intent)
+    }
+
+    fun stopServiceSession() {
+        val intent = Intent(context, JoggingService::class.java).apply {
+            action = JoggingService.ACTION_STOP
+        }
+        context.startService(intent)
+        refreshHistory()
     }
 
     fun triggerFingerprintUnlock() {
         if (activity == null) {
-            startSession()
+            startServiceSession()
             return
         }
 
@@ -352,9 +523,8 @@ fun JoggingTrackerScreen(
         val canAuthenticate = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
         
         if (canAuthenticate != BiometricManager.BIOMETRIC_SUCCESS) {
-            // If biometrics not set up or hardware unavailable, fallback to direct start
-            Toast.makeText(context, "Biometric unavailable. Starting session...", Toast.LENGTH_SHORT).show()
-            startSession()
+            Toast.makeText(context, "Biometric unavailable. Starting background session...", Toast.LENGTH_SHORT).show()
+            startServiceSession()
             return
         }
 
@@ -369,7 +539,7 @@ fun JoggingTrackerScreen(
 
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    startSession()
+                    startServiceSession()
                 }
 
                 override fun onAuthenticationFailed() {
@@ -381,7 +551,7 @@ fun JoggingTrackerScreen(
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Unlock Jogging Tracker")
-            .setSubtitle("Touch sensor to start tracking distance & time")
+            .setSubtitle("Touch sensor to start background tracking")
             .setNegativeButtonText("Cancel")
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
             .build()
@@ -389,13 +559,13 @@ fun JoggingTrackerScreen(
         biometricPrompt.authenticate(promptInfo)
     }
 
-    // Permission launcher for location access
+    // Permission launcher for location access and notifications (Android 13+)
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+        val grantedLocation = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                 permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (granted) {
+        if (grantedLocation) {
             triggerFingerprintUnlock()
         } else {
             Toast.makeText(context, "Location permission required to track distance", Toast.LENGTH_LONG).show()
@@ -407,41 +577,33 @@ fun JoggingTrackerScreen(
     fun startRunFlow() {
         val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        if (hasFine || hasCoarse) {
-            triggerFingerprintUnlock()
+        val hasNotification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         } else {
-            permissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
+            true
+        }
+
+        if (hasFine || hasCoarse) {
+            if (!hasNotification && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                permissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                        Manifest.permission.POST_NOTIFICATIONS
+                    )
                 )
-            )
-        }
-    }
-
-    // Timer loop with auto-stop at 2 hours limit
-    LaunchedEffect(isTracking) {
-        if (isTracking) {
-            val startMs = System.currentTimeMillis()
-            while (isTracking) {
-                val currentMs = System.currentTimeMillis()
-                val elapsed = currentMs - startMs
-                if (elapsed >= MAX_JOGGING_DURATION_MS) {
-                    elapsedTimeMs = MAX_JOGGING_DURATION_MS
-                    stopSession("Auto-stopped (2-Hour Max Limit)")
-                    break
-                } else {
-                    elapsedTimeMs = elapsed
-                }
-                delay(100L)
+            } else {
+                triggerFingerprintUnlock()
             }
-        }
-    }
-
-    // Clean up on dispose
-    DisposableEffect(Unit) {
-        onDispose {
-            locationTracker.stopTracking()
+        } else {
+            val permissionsList = mutableListOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                permissionsList.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            permissionLauncher.launch(permissionsList.toTypedArray())
         }
     }
 
@@ -464,7 +626,7 @@ fun JoggingTrackerScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = "RUN TRACKER",
+                    text = "RUN TRACKER (BACKGROUND ENABLED)",
                     style = MaterialTheme.typography.labelMedium,
                     color = Color.White.copy(alpha = 0.8f),
                     fontWeight = FontWeight.Bold
@@ -476,7 +638,7 @@ fun JoggingTrackerScreen(
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
-                    text = "Auto-stops after maximum 2 hours",
+                    text = "Runs in background (even with screen locked) up to 2 hours",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.9f)
                 )
@@ -595,7 +757,7 @@ fun JoggingTrackerScreen(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
-                    text = "Unlock with Fingerprint & Start Jogging",
+                    text = "Unlock with Fingerprint & Start Run",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -603,7 +765,7 @@ fun JoggingTrackerScreen(
             }
         } else {
             Button(
-                onClick = { stopSession("Stopped by User") },
+                onClick = { stopServiceSession() },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
