@@ -18,8 +18,6 @@ import android.os.Looper
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -459,7 +458,6 @@ fun JoggingTrackerScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val activity = context as? FragmentActivity
 
     val trackerState by JoggingTrackerManager.state.collectAsState()
     val isTracking = trackerState.isTracking
@@ -467,12 +465,14 @@ fun JoggingTrackerScreen(
     val distanceMeters = trackerState.distanceMeters
     val finishReason = trackerState.finishReason
     
+    var showPermissionDialog by remember { mutableStateOf(false) }
+
     var statusMessage by remember(isTracking, finishReason) {
         mutableStateOf(
             when {
                 isTracking -> "Jogging in progress (Background Service Active)..."
                 finishReason != null -> "Run finished! ($finishReason)"
-                else -> "Touch Fingerprint Sensor to Start Run"
+                else -> "Ready to start run"
             }
         )
     }
@@ -513,50 +513,15 @@ fun JoggingTrackerScreen(
         refreshHistory()
     }
 
-    fun triggerFingerprintUnlock() {
-        if (activity == null) {
-            startServiceSession()
-            return
+    fun hasRequiredPermissions(): Boolean {
+        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasNotification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
         }
-
-        val biometricManager = BiometricManager.from(context)
-        val canAuthenticate = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
-        
-        if (canAuthenticate != BiometricManager.BIOMETRIC_SUCCESS) {
-            Toast.makeText(context, "Biometric unavailable. Starting background session...", Toast.LENGTH_SHORT).show()
-            startServiceSession()
-            return
-        }
-
-        val executor = ContextCompat.getMainExecutor(activity)
-        val biometricPrompt = BiometricPrompt(activity, executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    statusMessage = "Unlock error: $errString"
-                    statusColor = Color.Red
-                }
-
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    super.onAuthenticationSucceeded(result)
-                    startServiceSession()
-                }
-
-                override fun onAuthenticationFailed() {
-                    super.onAuthenticationFailed()
-                    statusMessage = "Fingerprint not recognized"
-                    statusColor = Color.Red
-                }
-            })
-
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Unlock Jogging Tracker")
-            .setSubtitle("Touch sensor to start background tracking")
-            .setNegativeButtonText("Cancel")
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK)
-            .build()
-
-        biometricPrompt.authenticate(promptInfo)
+        return (hasFine || hasCoarse) && hasNotification
     }
 
     // Permission launcher for location access and notifications (Android 13+)
@@ -565,8 +530,14 @@ fun JoggingTrackerScreen(
     ) { permissions ->
         val grantedLocation = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
                 permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (grantedLocation) {
-            triggerFingerprintUnlock()
+        val grantedNotification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions[Manifest.permission.POST_NOTIFICATIONS] == true
+        } else {
+            true
+        }
+
+        if (grantedLocation && grantedNotification) {
+            startServiceSession()
         } else {
             Toast.makeText(context, "Location permission required to track distance", Toast.LENGTH_LONG).show()
             statusMessage = "Location permission denied"
@@ -575,36 +546,55 @@ fun JoggingTrackerScreen(
     }
 
     fun startRunFlow() {
-        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val hasNotification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (hasRequiredPermissions()) {
+            startServiceSession()
         } else {
-            true
+            showPermissionDialog = true
         }
+    }
 
-        if (hasFine || hasCoarse) {
-            if (!hasNotification && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                permissionLauncher.launch(
-                    arrayOf(
-                        Manifest.permission.ACCESS_FINE_LOCATION,
-                        Manifest.permission.ACCESS_COARSE_LOCATION,
-                        Manifest.permission.POST_NOTIFICATIONS
-                    )
-                )
-            } else {
-                triggerFingerprintUnlock()
+    if (showPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showPermissionDialog = false
+                statusMessage = "Run tracking cancelled: Permission required"
+                statusColor = Color.Red
+            },
+            title = {
+                Text(text = "Location Permission Required")
+            },
+            text = {
+                Text(text = "GPS location access is required to track your run distance and duration in real-time. Would you like to grant permissions or cancel?")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showPermissionDialog = false
+                        val permissionsList = mutableListOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        )
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            permissionsList.add(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                        permissionLauncher.launch(permissionsList.toTypedArray())
+                    }
+                ) {
+                    Text("Grant Permission")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        showPermissionDialog = false
+                        statusMessage = "Run tracking cancelled: Permission required"
+                        statusColor = Color.Red
+                    }
+                ) {
+                    Text("Cancel")
+                }
             }
-        } else {
-            val permissionsList = mutableListOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                permissionsList.add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            permissionLauncher.launch(permissionsList.toTypedArray())
-        }
+        )
     }
 
     Column(
@@ -632,7 +622,7 @@ fun JoggingTrackerScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Fingerprint Unlocked Jogging",
+                    text = "GPS Jogging Tracker",
                     style = MaterialTheme.typography.titleLarge,
                     color = Color.White,
                     fontWeight = FontWeight.ExtraBold
@@ -757,7 +747,7 @@ fun JoggingTrackerScreen(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
-                    text = "Unlock with Fingerprint & Start Run",
+                    text = "Start Run",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
