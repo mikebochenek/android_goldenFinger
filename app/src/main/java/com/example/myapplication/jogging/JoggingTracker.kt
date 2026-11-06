@@ -97,6 +97,7 @@ data class JoggingSession(
     val endTimeMs: Long,
     val durationMs: Long,
     val distanceMeters: Float,
+    val elevationGainMeters: Float = 0f,
     val finishReason: String
 )
 
@@ -119,6 +120,7 @@ object JoggingStorage {
                 put("endTimeMs", item.endTimeMs)
                 put("durationMs", item.durationMs)
                 put("distanceMeters", item.distanceMeters.toDouble())
+                put("elevationGainMeters", item.elevationGainMeters.toDouble())
                 put("finishReason", item.finishReason)
             }
             jsonArray.put(obj)
@@ -141,6 +143,7 @@ object JoggingStorage {
                         endTimeMs = obj.getLong("endTimeMs"),
                         durationMs = obj.getLong("durationMs"),
                         distanceMeters = obj.getDouble("distanceMeters").toFloat(),
+                        elevationGainMeters = obj.optDouble("elevationGainMeters", 0.0).toFloat(),
                         finishReason = obj.optString("finishReason", "Completed")
                     )
                 )
@@ -166,6 +169,7 @@ object JoggingTrackerManager {
         val startTimeMs: Long = 0L,
         val elapsedTimeMs: Long = 0L,
         val distanceMeters: Float = 0f,
+        val elevationGainMeters: Float = 0f,
         val finishReason: String? = null
     )
 
@@ -189,6 +193,8 @@ class JoggingService : Service() {
     private var systemLocationListener: LocationListener? = null
     private var startTimeMs: Long = 0L
     private var lastLocation: Location? = null
+    private var lastAltitude: Double? = null
+    private var elevationGain: Float = 0f
     private var timerJob: kotlinx.coroutines.Job? = null
 
     companion object {
@@ -223,12 +229,15 @@ class JoggingService : Service() {
     @SuppressLint("MissingPermission")
     private fun startRun() {
         startTimeMs = System.currentTimeMillis()
+        lastAltitude = null
+        elevationGain = 0f
         JoggingTrackerManager.updateState {
             it.copy(
                 isTracking = true,
                 startTimeMs = startTimeMs,
                 elapsedTimeMs = 0L,
                 distanceMeters = 0f,
+                elevationGainMeters = 0f,
                 finishReason = null
             )
         }
@@ -318,6 +327,22 @@ class JoggingService : Service() {
             }
         }
         lastLocation = location
+
+        if (location.hasAltitude()) {
+            val alt = location.altitude
+            val prevAlt = lastAltitude
+            if (prevAlt != null) {
+                val diff = alt - prevAlt
+                // Filter out GPS altitude noise (changes between 0.5m and 20m per update)
+                if (diff in 0.5..20.0) {
+                    elevationGain += diff.toFloat()
+                    JoggingTrackerManager.updateState { state ->
+                        state.copy(elevationGainMeters = elevationGain)
+                    }
+                }
+            }
+            lastAltitude = alt
+        }
     }
 
     private fun stopRun(reason: String) {
@@ -343,6 +368,7 @@ class JoggingService : Service() {
                 endTimeMs = endTime,
                 durationMs = state.elapsedTimeMs,
                 distanceMeters = state.distanceMeters,
+                elevationGainMeters = state.elevationGainMeters,
                 finishReason = reason
             )
             JoggingStorage.saveSession(this, session)
@@ -441,6 +467,10 @@ fun formatSpeed(distanceMeters: Float, durationMs: Long): String {
     return String.format(Locale.getDefault(), "%.1f km/h", speedKmH)
 }
 
+fun formatElevation(meters: Float): String {
+    return String.format(Locale.getDefault(), "+%d m", meters.roundToInt())
+}
+
 fun formatDate(ms: Long): String {
     val sdf = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
     return sdf.format(Date(ms))
@@ -463,6 +493,7 @@ fun JoggingTrackerScreen(
     val isTracking = trackerState.isTracking
     val elapsedTimeMs = trackerState.elapsedTimeMs
     val distanceMeters = trackerState.distanceMeters
+    val elevationGainMeters = trackerState.elevationGainMeters
     val finishReason = trackerState.finishReason
     
     var showPermissionDialog by remember { mutableStateOf(false) }
@@ -673,6 +704,18 @@ fun JoggingTrackerScreen(
                         value = formatDuration(elapsedTimeMs)
                     )
                     MetricBox(
+                        label = "ELEV GAIN",
+                        value = formatElevation(elevationGainMeters)
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceAround
+                ) {
+                    MetricBox(
                         label = "PACE",
                         value = formatPace(distanceMeters, elapsedTimeMs)
                     )
@@ -877,9 +920,10 @@ private fun SessionItemCard(session: JoggingSession) {
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        text = "Pace: ${formatPace(session.distanceMeters, session.durationMs)}",
+                        text = "Elev: ${formatElevation(session.elevationGainMeters)}",
                         style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFC4C02)
                     )
                 }
             }
