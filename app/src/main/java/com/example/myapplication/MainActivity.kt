@@ -79,7 +79,7 @@ class MainActivity : FragmentActivity() {
 }
 
 /**
- * Root Composable displaying top tab navigation between the Strava-like Jogging Tracker,
+ * Root Composable displaying top tab navigation between the Strava-like Jogging screen,
  * the Fingerprint Scanner Debug screen, and the Weight Lifting & Exercise Tracker.
  */
 @Composable
@@ -91,7 +91,7 @@ fun MainAppContent(launchCount: Int, modifier: Modifier = Modifier) {
             Tab(
                 selected = selectedTab == 0,
                 onClick = { selectedTab = 0 },
-                text = { Text("🏃 Jogging Tracker") }
+                text = { Text("🏃 Jogging") }
             )
             Tab(
                 selected = selectedTab == 1,

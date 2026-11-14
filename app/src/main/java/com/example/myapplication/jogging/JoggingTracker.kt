@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -35,6 +36,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -51,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -136,9 +140,10 @@ object JoggingStorage {
             val array = JSONArray(jsonStr)
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
+                val id = if (obj.has("id")) obj.getString("id") else "${obj.getLong("startTimeMs")}_${obj.getLong("durationMs")}"
                 list.add(
                     JoggingSession(
-                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        id = id,
                         startTimeMs = obj.getLong("startTimeMs"),
                         endTimeMs = obj.getLong("endTimeMs"),
                         durationMs = obj.getLong("durationMs"),
@@ -152,6 +157,29 @@ object JoggingStorage {
             e.printStackTrace()
         }
         return list
+    }
+
+    fun deleteSession(context: Context, sessionId: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val sessions = getSessions(context).filterNot { it.id == sessionId }
+        if (sessions.isEmpty()) {
+            prefs.edit { remove(KEY_SESSIONS) }
+        } else {
+            val jsonArray = JSONArray()
+            sessions.take(30).forEach { item ->
+                val obj = JSONObject().apply {
+                    put("id", item.id)
+                    put("startTimeMs", item.startTimeMs)
+                    put("endTimeMs", item.endTimeMs)
+                    put("durationMs", item.durationMs)
+                    put("distanceMeters", item.distanceMeters.toDouble())
+                    put("elevationGainMeters", item.elevationGainMeters.toDouble())
+                    put("finishReason", item.finishReason)
+                }
+                jsonArray.put(obj)
+            }
+            prefs.edit { putString(KEY_SESSIONS, jsonArray.toString()) }
+        }
     }
 
     fun clearSessions(context: Context) {
@@ -834,7 +862,7 @@ fun JoggingTrackerScreen(
                         refreshHistory()
                     }
                 ) {
-                    Text("Clear", style = MaterialTheme.typography.labelSmall)
+                    Text("Clear All", style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -850,8 +878,14 @@ fun JoggingTrackerScreen(
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                sessionList.take(5).forEach { session ->
-                    SessionItemCard(session)
+                sessionList.forEach { session ->
+                    SessionItemCard(
+                        session = session,
+                        onDelete = {
+                            JoggingStorage.deleteSession(context, session.id)
+                            refreshHistory()
+                        }
+                    )
                 }
             }
         }
@@ -876,7 +910,10 @@ private fun MetricBox(label: String, value: String) {
 }
 
 @Composable
-private fun SessionItemCard(session: JoggingSession) {
+private fun SessionItemCard(
+    session: JoggingSession,
+    onDelete: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -890,18 +927,34 @@ private fun SessionItemCard(session: JoggingSession) {
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = formatDate(session.startTimeMs),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
-                    text = session.finishReason,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (session.finishReason.contains("2-Hour")) Color.Red else Color(0xFF388E3C)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = session.finishReason,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (session.finishReason.contains("2-Hour")) Color.Red else Color(0xFF388E3C)
+                    )
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = android.R.drawable.ic_menu_delete),
+                            contentDescription = "Delete session",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    }
+                }
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
