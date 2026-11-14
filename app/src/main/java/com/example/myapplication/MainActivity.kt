@@ -43,6 +43,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
 import com.example.myapplication.jogging.JoggingTrackerScreen
+import com.example.myapplication.weightlifting.WeightLiftingTrackerScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
 
 /**
@@ -78,8 +79,8 @@ class MainActivity : FragmentActivity() {
 }
 
 /**
- * Root Composable displaying top tab navigation between the Strava-like Jogging Tracker
- * and the Fingerprint Scanner Debug screen.
+ * Root Composable displaying top tab navigation between the Strava-like Jogging Tracker,
+ * the Fingerprint Scanner Debug screen, and the Weight Lifting & Exercise Tracker.
  */
 @Composable
 fun MainAppContent(launchCount: Int, modifier: Modifier = Modifier) {
@@ -97,6 +98,11 @@ fun MainAppContent(launchCount: Int, modifier: Modifier = Modifier) {
                 onClick = { selectedTab = 1 },
                 text = { Text("🔒 Scanner Debug") }
             )
+            Tab(
+                selected = selectedTab == 2,
+                onClick = { selectedTab = 2 },
+                text = { Text("🏋️ Weight Lifting") }
+            )
         }
 
         when (selectedTab) {
@@ -108,6 +114,11 @@ fun MainAppContent(launchCount: Int, modifier: Modifier = Modifier) {
             1 -> FingerprintDemoScreen(
                 launchCount = launchCount,
                 modifier = Modifier.fillMaxSize()
+            )
+            2 -> WeightLiftingTrackerScreen(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
             )
         }
     }
