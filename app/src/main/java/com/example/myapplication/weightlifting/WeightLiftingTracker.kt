@@ -65,7 +65,7 @@ data class ExerciseDayEntry(
     val squats: Int = 0,
     val curls: Int = 0
 ) {
-    val totalReps: Int
+    val totalSets: Int
         get() = pushups + situps + squats + curls
 }
 
@@ -109,7 +109,7 @@ object WeightLiftingStorage {
 
     fun saveEntry(context: Context, entry: ExerciseDayEntry) {
         val map = getEntriesMap(context).toMutableMap()
-        if (entry.totalReps == 0) {
+        if (entry.totalSets == 0) {
             map.remove(entry.date)
         } else {
             map[entry.date] = entry
@@ -149,10 +149,10 @@ object WeightLiftingStorage {
             sb.appendLine("  • Situps:  ${entry.situps}")
             sb.appendLine("  • Squats:  ${entry.squats}")
             sb.appendLine("  • Curls:   ${entry.curls}")
-            sb.appendLine("  Total for Day: ${entry.totalReps} reps")
+            sb.appendLine("  Total for Day: ${entry.totalSets} sets")
             sb.appendLine()
 
-            grandTotal += entry.totalReps
+            grandTotal += entry.totalSets
             totalPushups += entry.pushups
             totalSitups += entry.situps
             totalSquats += entry.squats
@@ -162,7 +162,7 @@ object WeightLiftingStorage {
         sb.appendLine("========================================")
         sb.appendLine("OVERALL SUMMARY (${entries.size} days tracked):")
         sb.appendLine("Pushups: $totalPushups | Situps: $totalSitups | Squats: $totalSquats | Curls: $totalCurls")
-        sb.appendLine("Grand Total Reps: $grandTotal")
+        sb.appendLine("Grand Total Sets: $grandTotal")
         return sb.toString().trimEnd()
     }
 }
@@ -393,7 +393,7 @@ fun WeightLiftingTrackerScreen(
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         Text(
-                            text = "$dailyTotal reps",
+                            text = "$dailyTotal sets",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
@@ -510,7 +510,7 @@ private fun ExerciseInputRow(
             )
 
             Text(
-                text = "$value reps",
+                text = "$value sets",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary

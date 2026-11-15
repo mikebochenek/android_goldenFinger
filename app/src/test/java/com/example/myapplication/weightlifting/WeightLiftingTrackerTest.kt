@@ -6,7 +6,7 @@ import org.junit.Test
 class WeightLiftingTrackerTest {
 
     @Test
-    fun exerciseDayEntry_totalReps_calculationIsCorrect() {
+    fun exerciseDayEntry_totalSets_calculationIsCorrect() {
         val entry = ExerciseDayEntry(
             date = "2026-03-30",
             pushups = 25,
@@ -15,7 +15,7 @@ class WeightLiftingTrackerTest {
             curls = 15
         )
 
-        assertEquals(110, entry.totalReps)
+        assertEquals(110, entry.totalSets)
     }
 
     @Test
@@ -26,6 +26,6 @@ class WeightLiftingTrackerTest {
         assertEquals(0, entry.situps)
         assertEquals(0, entry.squats)
         assertEquals(0, entry.curls)
-        assertEquals(0, entry.totalReps)
+        assertEquals(0, entry.totalSets)
     }
 }
