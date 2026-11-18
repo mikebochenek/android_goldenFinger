@@ -6,6 +6,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -19,17 +21,19 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -185,6 +189,10 @@ object JoggingStorage {
     fun clearSessions(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit { remove(KEY_SESSIONS) }
+    }
+
+    fun exportSessionsText(context: Context): String {
+        return exportSessions(getSessions(context))
     }
 }
 
@@ -504,6 +512,42 @@ fun formatDate(ms: Long): String {
     return sdf.format(Date(ms))
 }
 
+fun formatEuropeanDate(ms: Long): String {
+    val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
+    return sdf.format(Date(ms))
+}
+
+/**
+ * Formats a single [JoggingSession] into a single line string containing:
+ * - Date in European format (dd/MM/yyyy HH:mm:ss)
+ * - Run time (duration)
+ * - Distance
+ * - Elevation gain
+ * - All other available session metrics/fields (ID, startTimeMs, endTimeMs, durationMs, distanceMeters, elevationGainMeters, pace, speed, finishReason)
+ */
+fun exportSessionToLine(session: JoggingSession): String {
+    val dateEur = formatEuropeanDate(session.startTimeMs)
+    val endDateEur = formatEuropeanDate(session.endTimeMs)
+    val runTime = formatDuration(session.durationMs)
+    val distance = formatDistance(session.distanceMeters)
+    val elevation = formatElevation(session.elevationGainMeters)
+    val pace = formatPace(session.distanceMeters, session.durationMs)
+    val speed = formatSpeed(session.distanceMeters, session.durationMs)
+    val reason = session.finishReason.replace("\n", " ").trim()
+
+    return "Date: $dateEur | Run Time: $runTime | Distance: $distance | Elevation Gain: $elevation | Pace: $pace | Speed: $speed | Reason: $reason | End Date: $endDateEur | ID: ${session.id} | StartMs: ${session.startTimeMs} | EndMs: ${session.endTimeMs} | DurationMs: ${session.durationMs} | DistanceMeters: ${session.distanceMeters} | ElevationMeters: ${session.elevationGainMeters}"
+}
+
+/**
+ * Exports a list of jogging sessions into text with one entry per line.
+ */
+fun exportSessions(sessions: List<JoggingSession>): String {
+    if (sessions.isEmpty()) {
+        return "No jogging sessions to export."
+    }
+    return sessions.joinToString("\n") { exportSessionToLine(it) }
+}
+
 /**
  * Main Strava-like Jogging Tracker Composable UI.
  *
@@ -525,6 +569,7 @@ fun JoggingTrackerScreen(
     val finishReason = trackerState.finishReason
     
     var showPermissionDialog by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
 
     var statusMessage by remember(isTracking, finishReason) {
         mutableStateOf(
@@ -856,15 +901,92 @@ fun JoggingTrackerScreen(
                 fontWeight = FontWeight.Bold
             )
             if (sessionList.isNotEmpty()) {
-                OutlinedButton(
-                    onClick = {
-                        JoggingStorage.clearSessions(context)
-                        refreshHistory()
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { showExportDialog = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFFC4C02)
+                        )
+                    ) {
+                        Text("Export", style = MaterialTheme.typography.labelSmall)
                     }
-                ) {
-                    Text("Clear All", style = MaterialTheme.typography.labelSmall)
+                    OutlinedButton(
+                        onClick = {
+                            JoggingStorage.clearSessions(context)
+                            refreshHistory()
+                        }
+                    ) {
+                        Text("Clear All", style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
+        }
+
+        if (showExportDialog) {
+            val exportText = remember(sessionList) { exportSessions(sessionList) }
+            AlertDialog(
+                onDismissRequest = { showExportDialog = false },
+                title = { Text("Export Jogging Sessions") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Exported events (one entry per line):",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(200.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(8.dp)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                Text(
+                                    text = exportText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                val clip = ClipData.newPlainText("Jogging Sessions Export", exportText)
+                                clipboard?.setPrimaryClip(clip)
+                                Toast.makeText(context, "Export copied to clipboard!", Toast.LENGTH_SHORT).show()
+                            }
+                        ) {
+                            Text("Copy")
+                        }
+                        Button(
+                            onClick = {
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    putExtra(Intent.EXTRA_TEXT, exportText)
+                                    type = "text/plain"
+                                }
+                                val shareIntent = Intent.createChooser(sendIntent, "Share Jogging Export")
+                                context.startActivity(shareIntent)
+                            }
+                        ) {
+                            Text("Share")
+                        }
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showExportDialog = false }) {
+                        Text("Close")
+                    }
+                }
+            )
         }
 
         if (sessionList.isEmpty()) {
