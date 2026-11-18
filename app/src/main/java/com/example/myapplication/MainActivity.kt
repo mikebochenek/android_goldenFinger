@@ -80,7 +80,7 @@ class MainActivity : FragmentActivity() {
 
 /**
  * Root Composable displaying top tab navigation between the Strava-like Jogging screen,
- * the Fingerprint Scanner Debug screen, and the Weight Lifting & Exercise Tracker.
+ * the Fingerprint Debug screen, and the Lifting & Exercise Tracker.
  */
 @Composable
 fun MainAppContent(launchCount: Int, modifier: Modifier = Modifier) {
@@ -96,12 +96,12 @@ fun MainAppContent(launchCount: Int, modifier: Modifier = Modifier) {
             Tab(
                 selected = selectedTab == 1,
                 onClick = { selectedTab = 1 },
-                text = { Text("🔒 Scanner Debug") }
+                text = { Text("🔒 Debug") }
             )
             Tab(
                 selected = selectedTab == 2,
                 onClick = { selectedTab = 2 },
-                text = { Text("🏋️ Weight Lifting") }
+                text = { Text("🏋️ Lifting") }
             )
         }
 
@@ -179,7 +179,7 @@ fun FingerprintDemoScreen(launchCount: Int, modifier: Modifier = Modifier) {
         HorizontalDivider()
 
         Text(
-            text = "Fingerprint Scanner Debug Demo",
+            text = "Fingerprint Debug Demo",
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.primary
         )
@@ -311,7 +311,7 @@ private fun showBiometricPrompt(
         })
 
     val promptInfo = BiometricPrompt.PromptInfo.Builder()
-        .setTitle("Biometric Scanner Debug")
+        .setTitle("Biometric Debug")
         .setSubtitle("Invoking TEE Fingerprint Matcher")
         .setNegativeButtonText("Cancel")
         .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)

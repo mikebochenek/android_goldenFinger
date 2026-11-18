@@ -4,8 +4,8 @@
 
 **goldenFinger** is an Android demo application built with Jetpack Compose and Material 3, featuring:
 - **🏃 Jogging Tracker**: A Strava-like GPS and activity tracking screen for logging workout time, distance, pace, and routes.
-- **🏋️ Weight Lifting Tracker**: A workout logger to track strength exercises, sets, reps, and lifted weights.
-- **🔒 Fingerprint Scanner Debugger**: A biometric authentication demo showcasing AndroidX Biometric API integration (TEE / StrongBox), app launch counting, and scan success/failure statistics.
+- **🏋️ Lifting Tracker**: A workout logger to track strength exercises, sets, reps, and lifted weights.
+- **🔒 Fingerprint Debugger**: A biometric authentication demo showcasing AndroidX Biometric API integration (TEE / StrongBox), app launch counting, and scan success/failure statistics.
 
 ---
 

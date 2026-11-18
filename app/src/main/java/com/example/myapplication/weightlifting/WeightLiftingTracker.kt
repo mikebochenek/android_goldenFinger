@@ -56,7 +56,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Data class representing daily weight lifting and exercise tracking counts.
+ * Data class representing daily lifting and exercise tracking counts.
  */
 data class ExerciseDayEntry(
     val date: String, // Date in "yyyy-MM-dd" format
@@ -135,7 +135,7 @@ object WeightLiftingStorage {
             return "No exercise history recorded yet."
         }
         val sb = StringBuilder()
-        sb.appendLine("=== Weight Lifting & Exercise History ===")
+        sb.appendLine("=== Lifting & Exercise History ===")
         sb.appendLine()
         var grandTotal = 0
         var totalPushups = 0
@@ -186,7 +186,7 @@ private fun getRelativeDateString(currentDateStr: String, dayOffset: Int): Strin
 }
 
 /**
- * Screen composable for tracking daily weight lifting and bodyweight exercises.
+ * Screen composable for tracking daily lifting and bodyweight exercises.
  */
 @Composable
 fun WeightLiftingTrackerScreen(
@@ -240,7 +240,7 @@ fun WeightLiftingTrackerScreen(
     ) {
         // Title & Header
         Text(
-            text = "🏋️ Exercise & Weight Lifting Tracker",
+            text = "🏋️ Exercise & Lifting Tracker",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary
